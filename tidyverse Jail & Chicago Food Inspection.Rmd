@@ -1,0 +1,214 @@
+In this practice, we will use the following data:
+
+1. Champaign County Sheriff Office & Jail Data and its data URL
+
+https://data.illinois.gov/organization/champcosheriff
+
+2. Chicago Food Inspections Data
+
+https://data.cityofchicago.org/Health-Human-Services/Food-Inspections-7-1-2018-Present/qizy-d2wf
+
+
+
+## Champaign County Sheriff Office & Jail Data
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+```
+```{r}
+champaign_jail = read_delim("../jail.csv",delim = ",")
+```
+```{r}
+# change column format for Jail Data
+champaign_jail$booking_date=as.Date(
+  champaign_jail$booking_date,  format = '%m/%d/%Y')
+champaign_jail$released_date=as.Date(
+  champaign_jail$released_date, format = '%m/%d/%Y')
+```
+
+
+Q1. Use two ways to calculate how long does a person stay in jail and compare the result
+
+HINT: 
+1. Calculate based on years, days, hours, minutes and seconds
+2. Calculate the difference of booking date time and released date time directly
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+library(lubridate)
+```
+```{r}
+# create booking date time and released date time
+inmates <- champaign_jail %>%
+  mutate(booking_date_time=paste0(booking_date," ",booking_time)) %>%
+  mutate(released_date_time=paste0(released_date," ",released_time))
+inmates$booking_date_time=as.POSIXct(inmates$booking_date_time,
+                                     format = '%Y-%m-%d %H:%M:%S')
+inmates$released_date_time=as.POSIXct(inmates$released_date_time,
+                                      format = '%Y-%m-%d %H:%M:%S')
+```
+```{r}
+# compute how long people spent in jail
+df_time=difftime(inmates$released_date_time,inmates$booking_date_time,units = "secs") %>%
+  seconds_to_period() %>%
+  as.data.frame()
+```
+
+
+### Method 1: Calculate by years, days, hour, minutes, seconds
+
+```{r}
+# separate time duration into years, days, hours, minutes and seconds
+inmates = inmates%>%
+  mutate(years='NA', days='NA', hour='NA', minutes='NA', seconds='NA')
+
+for (i in 1:nrow(inmates)){
+  st=str_split(df_time[i,], " ", simplify = TRUE)
+  for (j in 1:length(st)){
+    if (grepl("Y", st[j], fixed = TRUE)){
+      inmates[i,"years"]=str_remove_all(
+        str_split(df_time[i,], " ",simplify = TRUE)[j]
+        ,"Y+")
+    }
+    else if (grepl("d", st[j], fixed = TRUE)){
+      inmates[i,"days"]=str_remove_all(
+        str_split(df_time[i,], " ", simplify = TRUE)[j]
+        ,"d+")
+    }
+    else if (grepl("H", st[j], fixed = TRUE)){
+      inmates[i,"hour"]=str_remove_all(
+        str_split(df_time[i,], " ", simplify = TRUE)[j]
+        ,"H+")
+    }
+    else if (grepl("M", st[j], fixed = TRUE)){
+      inmates[i,"minutes"]=str_remove_all(
+        str_split(df_time[i,], " ",simplify =TRUE)[j]
+        ,"M+")
+    }
+    else if (grepl("S", st[j], fixed = TRUE)){
+      inmates[i,"seconds"]=str_remove_all(
+        str_split(df_time[i,], " ", simplify =TRUE)[j],
+        "S+")
+    }
+  }
+}
+```
+```{r}
+# change NA to 0
+for (j in c("years", "days", "hour", "minutes", "seconds")){
+  inmates[,j]=replace(inmates[,j],inmates[,j]=='NA',toString(0))
+}
+```
+```{r, warning=FALSE}
+# change data type
+inmates$years <- as.integer(inmates$years)
+inmates$days <- as.integer(inmates$days)
+inmates$hour <- as.integer(inmates$hour)
+inmates$minutes <- as.integer(inmates$minutes)
+inmates$seconds <- as.integer(inmates$seconds)
+
+# transform to seconds then transform to hours
+for(i in 1:nrow(inmates)){
+  inmates$time_spent_in_jail1[i]=round((
+    31556926*inmates$years[i]+86400*inmates$days[i]
+  +3600*inmates$hour[i]+60*inmates$minutes[i]
+  +1*inmates$seconds[i])/3600, digits = 4)
+}
+```
+
+
+### Method 2: Calculate by time difference
+
+```{r}
+# calculate by the time difference directly
+inmates = inmates %>% 
+  mutate(time_spent_in_jail2 = 
+           round(difftime(inmates$released_date_time,
+                    inmates$booking_date_time,units = "hour"), 
+                 digit = 4))
+
+inmates$time_spent_in_jail2=
+  str_remove_all(inmates$time_spent_in_jail2, " hours$")
+inmates$time_spent_in_jail2[is.na(inmates$time_spent_in_jail2)] <- 0
+```
+```{r, results='hide', message=FALSE, warning=FALSE}
+library(data.table)
+```
+```{r}
+# renames columns that contains the word "booking" to "booked"
+col_booking <- str_replace_all(colnames(inmates),"booking","booked")
+setnames(inmates, old = colnames(inmates), new = col_booking)
+```
+
+### Check whether the result of these two methods are the same?
+
+```{r}
+result=''
+for (i in 1:nrow(inmates)){
+  if (inmates$time_spent_in_jail1[i]
+      !=inmates$time_spent_in_jail2[i]){
+    result='different'
+    break
+  } else {
+    result='The same!'
+  }
+}
+print(result)
+```
+
+Q2. For the one that stay in the jail the longest, what crimes does he commit?
+
+```{r}
+inmates %>% 
+  filter(time_spent_in_jail1 == max(time_spent_in_jail1)) %>% 
+  {unique(.$crime)}
+```
+
+
+
+## Chicago Food Inspections Data
+
+```{r}
+chicago_food=read_delim(".../chicago_food.csv",delim = ",")
+# correct the date type 
+chicago_food$`Inspection Date`=as.Date(chicago_food$`Inspection Date`, format = '%m/%d/%Y')
+```
+
+Q1. Create a new data object that meet the following condition:
+
+1. inspection dates is greater than September 01, 2011
+
+2. The data object should contain a column representing whether the inspection is pass or not
+
+3. de-select "Address", "Census Tracts", "City", "Community Areas", "Historical Wards 2003-2015", "Location", "State", "Wards", and "Zip Codes"  
+
+NOTE: 1 if passes, 0 if fails, and NA otherwise
+
+```{r}
+inspections <-
+  # step1
+  chicago_food %>% filter(`Inspection Date`>"2011-09-11") %>%
+  # step2
+  mutate(pass_or_not = ifelse( Results == "Pass", 1, Results),
+         pass_or_not = ifelse( Results == "Fail", 0, pass_or_not),
+         pass_or_not = ifelse( Results != "Pass" &Results!="Fail",
+                               NA, pass_or_not)) %>%
+  # step3
+  select(!c("Address", "Census Tracts", "City", 
+            "Community Areas", "Historical Wards 2003-2015",
+            "Location", "State", "Wards","Zip Codes")) %>%
+  # step4
+  drop_na()
+```
+
+
+Q2. What was the most common facility type that fail the inspection? 
+
+```{r}
+inspections %>% filter(pass_or_not == 0) %>% 
+  count(`Facility Type`) %>% 
+  arrange(desc(n)) %>% slice(1)
+```
+
+
+
+
